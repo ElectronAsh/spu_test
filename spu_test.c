@@ -60,11 +60,11 @@ ADR +12= Read Data bus (cpuDataOut), without any other CPU signal.
          Write Data bus (cpuDataIn) + DMA_ACK = true (pulse).
 */
 
-void writeRaw(uint32_t data) {
-	uint32_t* BASE_GPU = (uint32_t *)axi_addr;
+void writeRaw(uint32_t addr, uint32_t data) {
+	uint32_t* BASE_SPU = (uint32_t *)axi_addr + ( (addr&0x1ff)>>2 );	// Mask address to 9 bits. Shift by 2 bits, as AXI addr is 32-bit WORD, and SPU addr is 16-bit WORD.
 	
-	while ( !(BASE_GPU[2] & 1<<28) );	// Wait for dbg_canWrite flag (High) before sending data. If LOW, then stay in while loop. TODO: Add timeout?
-	BASE_GPU[0] = data;
+	//while ( !(BASE_SPU[2] & 1<<28) );	// Wait for dbg_canWrite flag (High) before sending data. If LOW, then stay in while loop. TODO: Add timeout?
+	BASE_SPU[0] = data;
 }
 
 /*
@@ -240,6 +240,63 @@ void parser(const char* fileName, u16* psxBuffer, GPUManager& mgr, uint32_t dela
 }
 */
 
+/*
+SPU Voice 0..23 Registers
+  1F801C00h+N*10h 4   Voice 0..23 Volume Left/Right
+  1F801C04h+N*10h 2   Voice 0..23 ADPCM Sample Rate
+  1F801C06h+N*10h 2   Voice 0..23 ADPCM Start Address
+  1F801C08h+N*10h 4   Voice 0..23 ADSR Attack/Decay/Sustain/Release
+  1F801C0Ch+N*10h 2   Voice 0..23 ADSR Current Volume
+  1F801C0Eh+N*10h 2   Voice 0..23 ADPCM Repeat Address
+SPU Control Registers
+  1F801D80h 4  Main Volume Left/Right
+  1F801D84h 4  Reverb Output Volume Left/Right
+  1F801D88h 4  Voice 0..23 Key ON (Start Attack/Decay/Sustain) (W)
+  1F801D8Ch 4  Voice 0..23 Key OFF (Start Release) (W)
+  1F801D90h 4  Voice 0..23 Channel FM (pitch lfo) mode (R/W)
+  1F801D94h 4  Voice 0..23 Channel Noise mode (R/W)
+  1F801D98h 4  Voice 0..23 Channel Reverb mode (R/W)
+  1F801D9Ch 4  Voice 0..23 Channel ON/OFF (status) (R)
+  1F801DA0h 2  Unknown? (R) or (W)
+  1F801DA2h 2  Sound RAM Reverb Work Area Start Address
+  1F801DA4h 2  Sound RAM IRQ Address
+  1F801DA6h 2  Sound RAM Data Transfer Address
+  1F801DA8h 2  Sound RAM Data Transfer Fifo
+  1F801DAAh 2  SPU Control Register (SPUCNT)
+  1F801DACh 2  Sound RAM Data Transfer Control
+  1F801DAEh 2  SPU Status Register (SPUSTAT) (R)
+  1F801DB0h 4  CD Volume Left/Right
+  1F801DB4h 4  Extern Volume Left/Right
+  1F801DB8h 4  Current Main Volume Left/Right
+  1F801DBCh 4  Unknown? (R/W)
+SPU Reverb Configuration Area
+  1F801DC0h 2  dAPF1  Reverb APF Offset 1
+  1F801DC2h 2  dAPF2  Reverb APF Offset 2
+  1F801DC4h 2  vIIR   Reverb Reflection Volume 1
+  1F801DC6h 2  vCOMB1 Reverb Comb Volume 1
+  1F801DC8h 2  vCOMB2 Reverb Comb Volume 2
+  1F801DCAh 2  vCOMB3 Reverb Comb Volume 3
+  1F801DCCh 2  vCOMB4 Reverb Comb Volume 4
+  1F801DCEh 2  vWALL  Reverb Reflection Volume 2
+  1F801DD0h 2  vAPF1  Reverb APF Volume 1
+  1F801DD2h 2  vAPF2  Reverb APF Volume 2
+  1F801DD4h 4  mSAME  Reverb Same Side Reflection Address 1 Left/Right
+  1F801DD8h 4  mCOMB1 Reverb Comb Address 1 Left/Right
+  1F801DDCh 4  mCOMB2 Reverb Comb Address 2 Left/Right
+  1F801DE0h 4  dSAME  Reverb Same Side Reflection Address 2 Left/Right
+  1F801DE4h 4  mDIFF  Reverb Different Side Reflection Address 1 Left/Right
+  1F801DE8h 4  mCOMB3 Reverb Comb Address 3 Left/Right
+  1F801DECh 4  mCOMB4 Reverb Comb Address 4 Left/Right
+  1F801DF0h 4  dDIFF  Reverb Different Side Reflection Address 2 Left/Right
+  1F801DF4h 4  mAPF1  Reverb APF Address 1 Left/Right
+  1F801DF8h 4  mAPF2  Reverb APF Address 2 Left/Right
+  1F801DFCh 4  vIN    Reverb Input Volume Left/Right
+SPU Internal Registers
+  1F801E00h+N*04h  4 Voice 0..23 Current Volume Left/Right
+  1F801E60h      20h Unknown? (R/W)
+  1F801E80h     180h Unknown? (Read: FFh-filled) (Unused or Write only?)
+*/
+
 
 int main()
 {
@@ -250,16 +307,19 @@ int main()
 	//GPUManager mgr( ((uint32_t *)axi_addr) );
 	
 /*	
-ADR +0 = Write / Read to GP0
-ADR +4 = Write / Read to GP1
-ADR +8 = Bit 0:27 myDebugCnt (GPU counter cycle)
-         Bit 28 dbg_canWrite
-         Bit 29 IRQ Read 
-         Bit 30 DMA_Req Read / gpu_nrst (Write)
-         Bit 31 DMA_Ack (Write)
+ADR +0 = Write / Read SPU
+ADR +4 = Write / Read SPU
+ADR +8 = Bit 31 SPUDACK (write).
+         Bit 30 SPU_NRST (Write).
+         Bit 29 SPUINT (Read).
+         Bit 28 SPUDREQ (Read).
+         Bit 27:0 (not used).  
+		 
 ADR +12= Read Data bus (cpuDataOut), without any other CPU signal.
-         Write Data bus (cpuDataIn) + DMA_ACK = true.
+         Write Data bus (cpuDataIn) + SPUDACK = true.
 */
+
+// wire [31:0] flag_data = {2'b00, SPUINT, SPUDREQ, 28'h0000000 };
 
 
 	//printf("Resetting the GPU core...\n\n");
@@ -282,13 +342,50 @@ ADR +12= Read Data bus (cpuDataOut), without any other CPU signal.
 	fclose(fd);
 	*/
 	
-	/*
-	writeRaw(0x02FFFFFF);	// GP0(02h) FillVram / Colour.
-	writeRaw(0x00000000);
-	writeRaw(0x00040010);	// xpos.bit0-3=0Fh=bugged  xpos.bit0-3=ignored.
-	*/
-
+/*
+1F801DAAh - SPU Control Register (SPUCNT)
+  15    SPU Enable              (0=Off, 1=On)       (Don't care for CD Audio)
+  14    Mute SPU                (0=Mute, 1=Unmute)  (Don't care for CD Audio)
+  13-10 Noise Frequency Shift   (0..0Fh = Low .. High Frequency)
+  9-8   Noise Frequency Step    (0..03h = Step "4,5,6,7")
+  7     Reverb Master Enable    (0=Disabled, 1=Enabled)
+  6     IRQ9 Enable (0=Disabled/Acknowledge, 1=Enabled; only when Bit15=1)
+  5-4   Sound RAM Transfer Mode (0=Stop, 1=ManualWrite, 2=DMAwrite, 3=DMAread)
+  3     External Audio Reverb   (0=Off, 1=On)
+  2     CD Audio Reverb         (0=Off, 1=On) (for CD-DA and XA-ADPCM)
+  1     External Audio Enable   (0=Off, 1=On)
+  0     CD Audio Enable         (0=Off, 1=On) (for CD-DA and XA-ADPCM)
+*/
 	
+	//writeRaw(0x1F801DAA, 0x0000C000);	// SPU Control Register (SPUCNT).
+	writeRaw(0x1F801DAA, 0x0000C080);	// SPU Control Register (SPUCNT).
+	
+	writeRaw(0x1F801D80, 0x00003FFF);	// Main Volume LEFT.
+	writeRaw(0x1F801D82, 0x00003FFF);	// Main Volume RIGHT.
+
+	writeRaw(0x1F801D90, 0x00000000);	// Voice 0. Pitch Modulation Enable Flags (PMON).
+	
+	writeRaw(0x1F801DB0, 0x00000000);	// CD Audio Input Volume (for normal CD-DA, and compressed XA-ADPCM).
+	writeRaw(0x1F801DB4, 0x00000000);	// External Audio Input Volume.
+	writeRaw(0x1F801DB8, 0x00003FFF);	// Current Main Volume Left/Right.
+
+	writeRaw(0x1F801C00, 0x00003FFF);	// Voice 0 Volume Left.  (-4000h..+3FFFh = Volume -8000h..+7FFEh)
+	writeRaw(0x1F801C02, 0x00003FFF);	// Voice 0 Volume Right. (-4000h..+3FFFh = Volume -8000h..+7FFEh)
+	writeRaw(0x1F801C04, 0x00001000);	// Voice 0. ADPCM Sample Rate [15:0]. 1000h = 44,100Hz.
+	
+	writeRaw(0x1F801C06, 0x00000000);	// Voice 0. Sample Start Address [15:0].	
+	writeRaw(0x1F801C0E, 0x00001000);	// Voice 0. Sample Repeat Address [15:0]
+	
+	writeRaw(0x1F801C08, 0x0000000f);	// Voice 0. ADSR Lower. [15]=Attack Exp.  [14:0]=Attack shit. [9:8]=Attack Step. [7:4]=Decay shift. [3:0]=Sustain Level.
+	writeRaw(0x1F801C0A, 0x00000000);	// Voice 0. ADSR Upper. [31]/15?=Sustain Exp. [30]/14?=Sustain Dir. [29]/13?=0. [28:24]/12:8?=Sustain shift. [23:22]/7:6?=Sustain step. [21]/5?=Release Mode. [20:16]/4:0?=Release shift.
+	
+	writeRaw(0x1F801C0C, 0x00000000);	// Voice 0. Current ADSR Volume (R/W).
+	
+	writeRaw(0x1F801D88, 0x00000001);	// Voice 0. KON (Key ON). [23:0]=Voice 23 to 0.
+	
+	//writeRaw(0x1F801E00, 0x00003FFF);	// Voice 0. Current Volume Left/Right. 31:16=Right. 15:0=Left. (-8000h to +7FFFh).
+	
+
 	//parser( "/media/fat/DumpSet/FF7Station2_export", (u16*)fb_addr, mgr, 0);
 
 	usleep(5000);
