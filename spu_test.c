@@ -61,16 +61,17 @@ ADR +12= Read Data bus (cpuDataOut), without any other CPU signal.
 */
 
 void writeRaw(uint32_t addr, uint32_t data) {
-	uint32_t* BASE_SPU = (uint32_t *)axi_addr + ( (addr&0x1ff)>>2 );	// Mask address to 9 bits. Shift by 2 bits, as AXI addr is 32-bit WORD, and SPU addr is 16-bit WORD.
+	uint32_t* BASE_SPU = (uint32_t *)axi_addr;	// Mask address to 9 bits. Shift by 2 bits, as AXI addr is 32-bit WORD, and SPU addr is 16-bit WORD.
 	
 	//while ( !(BASE_SPU[2] & 1<<28) );	// Wait for dbg_canWrite flag (High) before sending data. If LOW, then stay in while loop. TODO: Add timeout?
-	BASE_SPU[0] = data;
+	BASE_SPU[ (addr&0x3ff) ] = data;
 }
 
-/*
+
 typedef unsigned short u16;
 typedef unsigned int   u32;
 
+/*
 class GPUManager {
 public:
 	GPUManager(u32* gpuBase):BASE_GPU(gpuBase),diff(0),writeIdx(0),readIdx(0) {}
@@ -176,6 +177,68 @@ int mmap_setup() {
 
 	return 0;
 }
+
+
+void spu_interp(const char* fileName) {
+	FILE* binSrc = fopen(fileName,"rb");
+	
+	fseek(binSrc, 0L, SEEK_END);
+	u32 file_size = ftell(binSrc);
+	fseek(binSrc, 0L, SEEK_SET);
+	printf("file_size: %d bytes.\n", file_size);
+	
+    for (uint32_t ptr=0; ptr<file_size; ) {
+        uint8_t opcode/* = spu_dump_bin[ptr++]*/;
+		fread(&opcode, sizeof(uint8_t),1, binSrc);
+		ptr++;
+		
+        if (opcode == 'X') { 
+            if (ptr>1) return;
+        }else if (opcode == 'V') {
+            //VSync(0);
+			usleep(16000);
+        }else if (opcode == 'W') {
+            uint32_t addr = 0;
+			fread(&addr, sizeof(uint32_t),1, binSrc);
+			ptr+=4;
+
+            uint16_t data = 0;
+			fread(&data, sizeof(uint16_t),1, binSrc);
+			ptr+=2;
+
+			printf("ptr: %08d  W (Write reg) addr: 0x%08X  data: 0x%04X\n", ptr, addr, data);
+
+			writeRaw(addr, data);
+			
+        }else if (opcode == 'F') {
+            uint16_t size = 0;
+			fread(&size, sizeof(uint16_t),1, binSrc);
+			ptr+=2;
+
+			printf("ptr: %08d  F (write FIFO) size: 0x%04X...\n", ptr, size);
+			
+            for (uint32_t i = 0; i<size; i++) {
+                uint16_t data = 0;
+				fread(&data, sizeof(uint16_t),1, binSrc);
+				ptr+=2;
+				
+				printf("ptr: %08d  (write FIFO) data: 0x%04X\n", ptr, data);
+                
+                //W(SPU_FIFO, data);
+				writeRaw(0x1DA8, data);
+
+                //bytesWritten++;
+                //if (bytesWritten % 32 == 0) {
+                    //SPU::waitForDMAready();
+                //}
+            }
+        } else {
+            printf("Unknown opcode %c (%d) @ 0x%x, breaking\n", opcode, opcode, ptr-1);
+            return;
+        }
+    }
+}
+
 
 /*
 void parser(const char* fileName, u16* psxBuffer, GPUManager& mgr, uint32_t delay) {
@@ -356,39 +419,47 @@ ADR +12= Read Data bus (cpuDataOut), without any other CPU signal.
   1     External Audio Enable   (0=Off, 1=On)
   0     CD Audio Enable         (0=Off, 1=On) (for CD-DA and XA-ADPCM)
 */
-	
-	//writeRaw(0x1F801DAA, 0x0000C000);	// SPU Control Register (SPUCNT).
-	writeRaw(0x1F801DAA, 0x0000C080);	// SPU Control Register (SPUCNT).
-	
-	writeRaw(0x1F801D80, 0x00003FFF);	// Main Volume LEFT.
-	writeRaw(0x1F801D82, 0x00003FFF);	// Main Volume RIGHT.
 
-	writeRaw(0x1F801D90, 0x00000000);	// Voice 0. Pitch Modulation Enable Flags (PMON).
-	
-	writeRaw(0x1F801DB0, 0x00000000);	// CD Audio Input Volume (for normal CD-DA, and compressed XA-ADPCM).
-	writeRaw(0x1F801DB4, 0x00000000);	// External Audio Input Volume.
-	writeRaw(0x1F801DB8, 0x00003FFF);	// Current Main Volume Left/Right.
+	//writeRaw(0x1DAA, 0x00000010);	// SPU Control Register (SPUCNT). [15]=DISABLE SPU! [14]=MUTE! [5:4]=b01 (Manual Write).
+	//writeRaw(0x1DAC, 0x00000004);	// Sound RAM Data Transfer Control (should be 0004h).
+	//writeRaw(0x1DA6, 0x00000200);	// 0x1000/8. Sound RAM Data Transfer Start Address.
 
-	writeRaw(0x1F801C00, 0x00003FFF);	// Voice 0 Volume Left.  (-4000h..+3FFFh = Volume -8000h..+7FFEh)
-	writeRaw(0x1F801C02, 0x00003FFF);	// Voice 0 Volume Right. (-4000h..+3FFFh = Volume -8000h..+7FFEh)
-	writeRaw(0x1F801C04, 0x00001000);	// Voice 0. ADPCM Sample Rate [15:0]. 1000h = 44,100Hz.
+	spu_interp("/media/fat/bios-sound.bin");
 	
-	writeRaw(0x1F801C06, 0x00000000);	// Voice 0. Sample Start Address [15:0].	
-	writeRaw(0x1F801C0E, 0x00001000);	// Voice 0. Sample Repeat Address [15:0]
+	usleep(4000000);
 	
-	writeRaw(0x1F801C08, 0x0000000f);	// Voice 0. ADSR Lower. [15]=Attack Exp.  [14:0]=Attack shit. [9:8]=Attack Step. [7:4]=Decay shift. [3:0]=Sustain Level.
-	writeRaw(0x1F801C0A, 0x00000000);	// Voice 0. ADSR Upper. [31]/15?=Sustain Exp. [30]/14?=Sustain Dir. [29]/13?=0. [28:24]/12:8?=Sustain shift. [23:22]/7:6?=Sustain step. [21]/5?=Release Mode. [20:16]/4:0?=Release shift.
+	//writeRaw(0x1DAA, 0x0000C010);	// SPU Control Register (SPUCNT). [15]=ENABLE SPU. [14]=UNMUTE. [5:4]=b01 (Manual Write).
 	
-	writeRaw(0x1F801C0C, 0x00000000);	// Voice 0. Current ADSR Volume (R/W).
+	writeRaw(0x1DAA, 0x0000C000);	// SPU Control Register (SPUCNT). [15]=ENABLE SPU. [14]=UNMUTE. [5:4]=b00.
 	
-	writeRaw(0x1F801D88, 0x00000001);	// Voice 0. KON (Key ON). [23:0]=Voice 23 to 0.
-	
-	//writeRaw(0x1F801E00, 0x00003FFF);	// Voice 0. Current Volume Left/Right. 31:16=Right. 15:0=Left. (-8000h to +7FFFh).
-	
+	writeRaw(0x1D80, 0x00003FFF);	// Main Volume LEFT.
+	writeRaw(0x1D82, 0x00003FFF);	// Main Volume RIGHT.
 
+	writeRaw(0x1D90, 0x00000000);	// Voice 0. Pitch Modulation Enable Flags (PMON).
+	
+	writeRaw(0x1DB0, 0x00000000);	// CD Audio Input Volume (for normal CD-DA, and compressed XA-ADPCM).
+	writeRaw(0x1DB4, 0x00000000);	// External Audio Input Volume.
+	writeRaw(0x1DB8, 0x00003FFF);	// Current Main Volume Left/Right.
+
+	writeRaw(0x1C00, 0x00003FFF);	// Voice 0 Volume Left.  (-4000h..+3FFFh = Volume -8000h..+7FFEh)
+	writeRaw(0x1C02, 0x00003FFF);	// Voice 0 Volume Right. (-4000h..+3FFFh = Volume -8000h..+7FFEh)
+	writeRaw(0x1C04, 0x00001000);	// Voice 0. ADPCM Sample Rate [15:0]. 1000h = 44,100Hz.
+	
+	writeRaw(0x1C06, 0x00000000);	// Voice 0. Sample Start Address [15:0].	
+	writeRaw(0x1C0E, 0x00008000);	// Voice 0. Sample Repeat Address [15:0]
+	
+	writeRaw(0x1C08, 0x0000000f);	// Voice 0. ADSR Lower. [15]=Attack Exp.  [14:0]=Attack shift. [9:8]=Attack Step. [7:4]=Decay shift. [3:0]=Sustain Level.
+	writeRaw(0x1C0A, 0x00000000);	// Voice 0. ADSR Upper. [31]/15?=Sustain Exp. [30]/14?=Sustain Dir. [29]/13?=0. [28:24]/12:8?=Sustain shift. [23:22]/7:6?=Sustain step. [21]/5?=Release Mode. [20:16]/4:0?=Release shift.
+	
+	writeRaw(0x1C0C, 0x00000000);	// Voice 0. Current ADSR Volume (R/W).
+	
+	writeRaw(0x1D88, 0x00000001);	// Voice 0. KON (Key ON). [23:0]=Voice 23 to 0.
+	
+	//writeRaw(0x1E00, 0x00003FFF);	// Voice 0. Current Volume Left/Right. 31:16=Right. 15:0=Left. (-8000h to +7FFFh).
+	
 	//parser( "/media/fat/DumpSet/FF7Station2_export", (u16*)fb_addr, mgr, 0);
 
-	usleep(5000);
+
 	
 
 	/*
