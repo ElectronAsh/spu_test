@@ -68,6 +68,11 @@ void writeRaw(uint16_t addr, uint16_t data) {
 	BASE_SPU[ (addr&0x3ff) ] = data;
 }
 
+void waitForDMAready() {
+	uint32_t* SPU_STAT = (uint32_t *)(axi_addr+0x1ae);
+	while ( (*SPU_STAT) & 1<<10 );	// Stay in the while loop if the Data Transfer Busy Flag (bit 10) is high.
+}
+
 
 typedef unsigned short u16;
 typedef unsigned int   u32;
@@ -232,8 +237,9 @@ void spu_interp(const char* fileName) {
 
                 bytesWritten++;
                 if (bytesWritten % 32 == 0) {
-					usleep(100);
                     //SPU::waitForDMAready();
+					//waitForDMAready();
+					usleep(800);
                 }
             }
         } else {
@@ -429,7 +435,9 @@ ADR +12= Read Data bus (cpuDataOut), without any other CPU signal.
 	//writeRaw(0x1DA6, 0x0200);	// 0x1000/8. Sound RAM Data Transfer Start Address.
 
 	//spu_interp("/media/fat/bios-sound.bin");
-	spu_interp("/media/fat/crash1.spudump");
+	//spu_interp("/media/fat/crash1.spudump");
+	spu_interp("/media/fat/ff7-101-the-prelude.spudump");
+	//spu_interp("/media/fat/metal-slug-x-03-Judgement.spudump");
 	
 	//writeRaw(0x1DAA, 0xC010);	// SPU Control Register (SPUCNT). [15]=ENABLE SPU. [14]=UNMUTE. [5:4]=b01 (Manual Write).
 
@@ -462,7 +470,7 @@ ADR +12= Read Data bus (cpuDataOut), without any other CPU signal.
 	//writeRaw(0x1E00, 0x3FFF);	// Voice 0. Current Volume Left/Right. 31:16=Right. 15:0=Left. (-8000h to +7FFFh).
 	*/
 	
-	usleep(40000);	
+	usleep(40000);
 
 	/*
 	uint32_t offset = 0x0;
