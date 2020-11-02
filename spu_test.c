@@ -73,6 +73,10 @@ void waitForDMAready() {
 	while ( (*SPU_STAT) & 1<<10 );	// Stay in the while loop if the Data Transfer Busy Flag (bit 10) is high.
 }
 
+void waitForFIFOnotFull() {
+	uint32_t* FLAGS = (uint32_t *)(axi_addr+0x8);
+	while ( (*FLAGS) & 1<<31 );		// Stay in the while loop if the isFIFOFull Flag (bit 31) is high.
+}
 
 typedef unsigned short u16;
 typedef unsigned int   u32;
@@ -204,7 +208,7 @@ void spu_interp(const char* fileName) {
             if (ptr>1) return;
         }else if (opcode == 'V') {
             //VSync(0);
-			usleep(16000);
+			usleep(16666);
         }else if (opcode == 'W') {
             uint32_t addr = 0;
 			fread(&addr, sizeof(uint32_t),1, binSrc);
@@ -213,16 +217,14 @@ void spu_interp(const char* fileName) {
             uint16_t data = 0;
 			fread(&data, sizeof(uint16_t),1, binSrc);
 			ptr+=2;
-
+			
 			//printf("ptr: %08d  W (Write reg) addr: 0x%08X  data: 0x%04X\n", ptr, addr, data);
-
 			writeRaw(addr&0xffff, data);	// writeRaw only needs the lower 16 bits of the address.
 			
         }else if (opcode == 'F') {
             uint16_t size = 0;
 			fread(&size, sizeof(uint16_t),1, binSrc);
 			ptr+=2;
-
 			//printf("ptr: %08d  F (write FIFO) size: 0x%04X...\n", ptr, size);
 			
             for (uint32_t i = 0; i<size; i++) {
@@ -231,15 +233,14 @@ void spu_interp(const char* fileName) {
 				ptr+=2;
 				
 				//printf("ptr: %08d  (write FIFO) data: 0x%04X\n", ptr, data);
-                
-                //W(SPU_FIFO, data);
-				writeRaw(0x1DA8, data);
+				//waitForFIFOnotFull();
+				writeRaw(0x1DA8, data);	//W(SPU_FIFO, data);
 
                 bytesWritten++;
                 if (bytesWritten % 32 == 0) {
-                    //SPU::waitForDMAready();
 					//waitForDMAready();
-					usleep(800);
+					//usleep(700);
+					usleep(200);
                 }
             }
         } else {
@@ -435,6 +436,7 @@ ADR +12= Read Data bus (cpuDataOut), without any other CPU signal.
 	//writeRaw(0x1DA6, 0x0200);	// 0x1000/8. Sound RAM Data Transfer Start Address.
 
 	//spu_interp("/media/fat/bios-sound.bin");
+	//spu_interp("/media/fat/bios-no-reverb.spudump");
 	//spu_interp("/media/fat/crash1.spudump");
 	spu_interp("/media/fat/ff7-101-the-prelude.spudump");
 	//spu_interp("/media/fat/metal-slug-x-03-Judgement.spudump");
@@ -470,7 +472,7 @@ ADR +12= Read Data bus (cpuDataOut), without any other CPU signal.
 	//writeRaw(0x1E00, 0x3FFF);	// Voice 0. Current Volume Left/Right. 31:16=Right. 15:0=Left. (-8000h to +7FFFh).
 	*/
 	
-	usleep(40000);
+	//usleep(40000);
 
 	/*
 	uint32_t offset = 0x0;
