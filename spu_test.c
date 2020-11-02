@@ -218,8 +218,16 @@ void spu_interp(const char* fileName) {
 			fread(&data, sizeof(uint16_t),1, binSrc);
 			ptr+=2;
 			
-			//printf("ptr: %08d  W (Write reg) addr: 0x%08X  data: 0x%04X\n", ptr, addr, data);
-			writeRaw(addr&0xffff, data);	// writeRaw only needs the lower 16 bits of the address.
+			if (addr==0x1f801daa && (data&0x20)) {
+				printf("SPU_CONT DMA bit set!");
+				data = data&0xffcf;
+				data = data|0x10;
+				writeRaw(addr&0xffff, data);
+			}
+			else {
+				//printf("ptr: %08d  W (Write reg) addr: 0x%08X  data: 0x%04X\n", ptr, addr, data);
+				writeRaw(addr&0xffff, data);	// writeRaw only needs the lower 16 bits of the address.
+			}
 			
         }else if (opcode == 'F') {
             uint16_t size = 0;
@@ -239,8 +247,7 @@ void spu_interp(const char* fileName) {
                 bytesWritten++;
                 if (bytesWritten % 32 == 0) {
 					//waitForDMAready();
-					//usleep(700);
-					usleep(200);
+					usleep(700);
                 }
             }
         } else {
@@ -437,8 +444,8 @@ ADR +12= Read Data bus (cpuDataOut), without any other CPU signal.
 
 	//spu_interp("/media/fat/bios-sound.bin");
 	//spu_interp("/media/fat/bios-no-reverb.spudump");
-	//spu_interp("/media/fat/crash1.spudump");
-	spu_interp("/media/fat/ff7-101-the-prelude.spudump");
+	spu_interp("/media/fat/crash1.spudump");
+	//spu_interp("/media/fat/ff7-101-the-prelude.spudump");
 	//spu_interp("/media/fat/metal-slug-x-03-Judgement.spudump");
 	
 	//writeRaw(0x1DAA, 0xC010);	// SPU Control Register (SPUCNT). [15]=ENABLE SPU. [14]=UNMUTE. [5:4]=b01 (Manual Write).
