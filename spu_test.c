@@ -60,24 +60,6 @@ ADR +12= Read Data bus (cpuDataOut), without any other CPU signal.
          Write Data bus (cpuDataIn) + DMA_ACK = true (pulse).
 */
 
-void writeRaw(uint16_t addr, uint16_t data) {
-	uint32_t* BASE_SPU = (uint32_t *)axi_addr;	// Address is shifted right by 2 bits on the SPU test core now.
-												// (because AXI is set up for 32-bit aligned access, and seems to ignore the two LSB bits of the address.)
-	
-	//while ( !(BASE_SPU[2] & 1<<28) );	// Wait for dbg_canWrite flag (High) before sending data. If LOW, then stay in while loop. TODO: Add timeout?
-	BASE_SPU[ (addr&0x3ff) ] = data;
-}
-
-void waitForDMAready() {
-	uint32_t* SPU_STAT = (uint32_t *)(axi_addr+0x1ae);
-	while ( (*SPU_STAT) & 1<<10 );	// Stay in the while loop if the Data Transfer Busy Flag (bit 10) is high.
-}
-
-void waitForFIFOnotFull() {
-	uint32_t* FLAGS = (uint32_t *)(axi_addr+0x8);
-	while ( (*FLAGS) & 1<<31 );		// Stay in the while loop if the isFIFOFull Flag (bit 31) is high.
-}
-
 typedef unsigned short u16;
 typedef unsigned int   u32;
 
@@ -135,8 +117,38 @@ private:
 };
 */
 
-uint8_t mmap_setup_done = 0;
 
+void writeRaw(uint16_t addr, uint16_t data) {
+	volatile uint32_t* BASE_SPU = (uint32_t *)axi_addr;	// Address is shifted right by 2 bits on the SPU test core now.
+												// (because AXI is set up for 32-bit aligned access, and seems to ignore the two LSB bits of the address.)
+	
+	//while ( !(BASE_SPU[2] & 1<<28) );	// Wait for dbg_canWrite flag (High) before sending data. If LOW, then stay in while loop. TODO: Add timeout?
+	BASE_SPU[addr&0x3ff] = data;
+}
+
+void waitForDMAready() {
+	volatile uint32_t* SPU_STAT = (uint32_t *)(axi_addr+0x1ae);
+	while ( (*SPU_STAT) & 1<<10 );	// Stay in the while loop if the Data Transfer Busy Flag (bit 10) is high.
+}
+
+void waitForFIFOnotFull() {
+	volatile uint32_t* FLAGS = (uint32_t *)(axi_addr+0x8);
+	while ( (*FLAGS) & 1<<31 );		// Stay in the while loop if the isFIFOFull Flag (bit 31) is high.
+}
+
+void SPUreset() {
+	volatile uint32_t* BASE_SPU = (uint32_t *)axi_addr;	// Address is shifted right by 2 bits on the SPU test core now.
+	BASE_SPU[0x0800] = 0x0000;
+}
+
+void SPUrun() {
+	volatile uint32_t* BASE_SPU = (uint32_t *)axi_addr;	// Address is shifted right by 2 bits on the SPU test core now.
+	BASE_SPU[0x0800] = 0x0001;
+}
+
+
+
+uint8_t mmap_setup_done = 0;
 
 int mmap_setup() {
 	printf("HPS AXI Bridge Setup. ElectronAsh / dentnz\n\n");
@@ -188,9 +200,9 @@ int mmap_setup() {
 	return 0;
 }
 
-
 void spu_interp(const char* fileName) {
 	uint32_t bytesWritten = 0;
+	uint32_t lastConfig = 0x8000;
 	
 	FILE* binSrc = fopen(fileName,"rb");
 	
@@ -218,17 +230,18 @@ void spu_interp(const char* fileName) {
 			fread(&data, sizeof(uint16_t),1, binSrc);
 			ptr+=2;
 			
-			if (addr==0x1f801daa && (data&0x20)) {
-				printf("SPU_CONT DMA bit set!");
+			if (addr==0x1f801daa /* && (data&0x20)*/) {
+				/*
 				data = data&0xffcf;
 				data = data|0x10;
 				writeRaw(addr&0xffff, data);
-			}
-			else {
+				*/
+				lastConfig = data & (~(3<<4));
+				writeRaw(addr, lastConfig); // Clear bit 4-5
+			} else {
 				//printf("ptr: %08d  W (Write reg) addr: 0x%08X  data: 0x%04X\n", ptr, addr, data);
-				writeRaw(addr&0xffff, data);	// writeRaw only needs the lower 16 bits of the address.
+				writeRaw(addr, data);	// writeRaw only needs the lower 16 bits of the address.
 			}
-			
         }else if (opcode == 'F') {
             uint16_t size = 0;
 			fread(&size, sizeof(uint16_t),1, binSrc);
@@ -241,13 +254,12 @@ void spu_interp(const char* fileName) {
 				ptr+=2;
 				
 				//printf("ptr: %08d  (write FIFO) data: 0x%04X\n", ptr, data);
-				//waitForFIFOnotFull();
 				writeRaw(0x1DA8, data);	//W(SPU_FIFO, data);
 
                 bytesWritten++;
-                if (bytesWritten % 32 == 0) {
-					//waitForDMAready();
-					usleep(700);
+                if ((bytesWritten % 32 == 0) || ((i+1)==size)) {
+					writeRaw(0x1daa, lastConfig | (1<<4)); // MANUAL WRITE
+					waitForDMAready();
                 }
             }
         } else {
@@ -438,13 +450,18 @@ ADR +12= Read Data bus (cpuDataOut), without any other CPU signal.
   0     CD Audio Enable         (0=Off, 1=On) (for CD-DA and XA-ADPCM)
 */
 
+	SPUreset();		// Reset the SPU, by clearing SPU_NRST on bit [0].
+	usleep(10);
+	SPUrun();		// Bring the SPU out of reset, by setting SPU_NRST on bit [0].
+	usleep(10);
+
 	//writeRaw(0x1DAA, 0x0010);	// SPU Control Register (SPUCNT). [15]=DISABLE SPU! [14]=MUTE! [5:4]=b01 (Manual Write).
 	//writeRaw(0x1DAC, 0x0004);	// Sound RAM Data Transfer Control (should be 0004h).
 	//writeRaw(0x1DA6, 0x0200);	// 0x1000/8. Sound RAM Data Transfer Start Address.
 
 	//spu_interp("/media/fat/bios-sound.bin");
-	//spu_interp("/media/fat/bios-no-reverb.spudump");
-	spu_interp("/media/fat/crash1.spudump");
+	spu_interp("/media/fat/bios-no-reverb.spudump");
+	//spu_interp("/media/fat/crash1.spudump");
 	//spu_interp("/media/fat/ff7-101-the-prelude.spudump");
 	//spu_interp("/media/fat/metal-slug-x-03-Judgement.spudump");
 	
