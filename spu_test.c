@@ -120,30 +120,28 @@ private:
 
 void writeRaw(uint16_t addr, uint16_t data) {
 	volatile uint32_t* BASE_SPU = (uint32_t *)axi_addr;	// Address is shifted right by 2 bits on the SPU test core now.
-												// (because AXI is set up for 32-bit aligned access, and seems to ignore the two LSB bits of the address.)
-	
-	//while ( !(BASE_SPU[2] & 1<<28) );	// Wait for dbg_canWrite flag (High) before sending data. If LOW, then stay in while loop. TODO: Add timeout?
+														// (because AXI is set up for 32-bit aligned access, and seems to ignore the two LSB bits of the address.)
 	BASE_SPU[addr&0x3ff] = data;
 }
 
 void waitForDMAready() {
-	volatile uint32_t* SPU_STAT = (uint32_t *)(axi_addr+0x1ae);
+	volatile uint32_t* SPU_STAT = (uint32_t *)(axi_addr+0x1ae);	// 0x001ae is the address seen on bridge_m0_address. (reads below addr 0x2000 DO trigger SPU RD!).
 	while ( (*SPU_STAT) & 1<<10 );	// Stay in the while loop if the Data Transfer Busy Flag (bit 10) is high.
 }
 
 void waitForFIFOnotFull() {
-	volatile uint32_t* FLAGS = (uint32_t *)(axi_addr+0x8);
-	while ( (*FLAGS) & 1<<31 );		// Stay in the while loop if the isFIFOFull Flag (bit 31) is high.
+	volatile uint32_t* FLAGS = (uint32_t *)(axi_addr+0x2008);	// 0x02008 is the address seen on bridge_m0_address. (reads from addr 0x2000 and above don't trigger SPU RD!)
+	while ( (*FLAGS) & 1<<30 );		// Stay in the while loop if the isFIFOFull Flag (bit 31) is high.
 }
 
 void SPUreset() {
 	volatile uint32_t* BASE_SPU = (uint32_t *)axi_addr;	// Address is shifted right by 2 bits on the SPU test core now.
-	BASE_SPU[0x0800] = 0x0000;
+	BASE_SPU[0x0800] = 0x0000;	// Write to AXI 0x2000 (byte addr). Flags/reset. Does not trigger SPU WR.
 }
 
 void SPUrun() {
 	volatile uint32_t* BASE_SPU = (uint32_t *)axi_addr;	// Address is shifted right by 2 bits on the SPU test core now.
-	BASE_SPU[0x0800] = 0x0001;
+	BASE_SPU[0x0800] = 0x0001;	// Write to AXI 0x2000 (byte addr). Flags/reset. Does not trigger SPU WR.
 }
 
 
@@ -200,9 +198,13 @@ int mmap_setup() {
 	return 0;
 }
 
+
+
 void spu_interp(const char* fileName) {
 	uint32_t bytesWritten = 0;
 	uint32_t lastConfig = 0x8000;
+	
+	uint16_t ram_transfer_addr;
 	
 	FILE* binSrc = fopen(fileName,"rb");
 	
@@ -230,6 +232,11 @@ void spu_interp(const char* fileName) {
 			fread(&data, sizeof(uint16_t),1, binSrc);
 			ptr+=2;
 			
+			if (addr==0x1f801da6) {
+				//printf("FIFO Transfer Addr: 0x%04X\n", data);
+				ram_transfer_addr = data << 3;	// Convert to BYTE address, for printf display.
+			}
+			
 			if (addr==0x1f801daa /* && (data&0x20)*/) {
 				/*
 				data = data&0xffcf;
@@ -253,12 +260,15 @@ void spu_interp(const char* fileName) {
 				fread(&data, sizeof(uint16_t),1, binSrc);
 				ptr+=2;
 				
-				//printf("ptr: %08d  (write FIFO) data: 0x%04X\n", ptr, data);
-				writeRaw(0x1DA8, data);	//W(SPU_FIFO, data);
+				waitForFIFOnotFull();
+				//printf("ptr: %08d  (write FIFO) addr: 0x%06X  data: 0x%04X\n", ptr, ram_transfer_addr, data);
+				writeRaw(0x1A8, data);	//W(SPU_FIFO, data);
+				
+				ram_transfer_addr = ram_transfer_addr + 2;
 
                 bytesWritten++;
                 if ((bytesWritten % 32 == 0) || ((i+1)==size)) {
-					writeRaw(0x1daa, lastConfig | (1<<4)); // MANUAL WRITE
+					writeRaw(0x1aa, lastConfig | (1<<4)); // MANUAL WRITE
 					waitForDMAready();
                 }
             }
@@ -459,8 +469,8 @@ ADR +12= Read Data bus (cpuDataOut), without any other CPU signal.
 	//writeRaw(0x1DAC, 0x0004);	// Sound RAM Data Transfer Control (should be 0004h).
 	//writeRaw(0x1DA6, 0x0200);	// 0x1000/8. Sound RAM Data Transfer Start Address.
 
-	//spu_interp("/media/fat/bios-sound.bin");
-	spu_interp("/media/fat/bios-no-reverb.spudump");
+	spu_interp("/media/fat/bios-sound.bin");
+	//spu_interp("/media/fat/bios-no-reverb.spudump");
 	//spu_interp("/media/fat/crash1.spudump");
 	//spu_interp("/media/fat/ff7-101-the-prelude.spudump");
 	//spu_interp("/media/fat/metal-slug-x-03-Judgement.spudump");
