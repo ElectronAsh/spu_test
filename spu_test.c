@@ -237,12 +237,11 @@ void spu_interp(const char* fileName) {
 				ram_transfer_addr = data << 3;	// Convert to BYTE address, for printf display.
 			}
 			
+			
 			if (addr==0x1f801daa /* && (data&0x20)*/) {
-				/*
-				data = data&0xffcf;
-				data = data|0x10;
-				writeRaw(addr&0xffff, data);
-				*/
+				//data = data&0xffcf;
+				//data = data|0x10;
+				//writeRaw(addr&0xffff, data);
 				lastConfig = data & (~(3<<4));
 				writeRaw(addr, lastConfig); // Clear bit 4-5
 			} else {
@@ -262,13 +261,13 @@ void spu_interp(const char* fileName) {
 				
 				waitForFIFOnotFull();
 				//printf("ptr: %08d  (write FIFO) addr: 0x%06X  data: 0x%04X\n", ptr, ram_transfer_addr, data);
-				writeRaw(0x1A8, data);	//W(SPU_FIFO, data);
+				writeRaw(0xDA8, data);	//W(SPU_FIFO, data);
 				
 				ram_transfer_addr = ram_transfer_addr + 2;
 
                 bytesWritten++;
                 if ((bytesWritten % 32 == 0) || ((i+1)==size)) {
-					writeRaw(0x1aa, lastConfig | (1<<4)); // MANUAL WRITE
+					writeRaw(0xDAA, lastConfig | (1<<4)); // MANUAL WRITE
 					waitForDMAready();
                 }
             }
